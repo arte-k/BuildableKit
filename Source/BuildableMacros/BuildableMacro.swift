@@ -10,12 +10,13 @@ import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 import SwiftDiagnostics
 
-public struct NoopMarkerMacro: PeerMacro {
+public struct MarkerMacro: MemberAttributeMacro {
     public static func expansion(
         of node: AttributeSyntax,
-        providingPeersOf decl: some DeclSyntaxProtocol,
-        in ctx: some MacroExpansionContext
-    ) throws -> [DeclSyntax] { return [] }
+        attachedTo declaration: some DeclGroupSyntax,
+        providingAttributesFor member: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [AttributeSyntax] { return [] }
 }
 
 private struct Field {

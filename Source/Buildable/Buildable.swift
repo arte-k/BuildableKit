@@ -7,6 +7,6 @@
 
 import Foundation
 
-@attached(peer, names: arbitrary)
+@attached(member, names: arbitrary)
 public macro Buildable(order: [String] = []) =
   #externalMacro(module: "BuildableMacros", type: "BuildableMacro")

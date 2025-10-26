@@ -28,17 +28,16 @@ let package = Package(
             ]
         ),
 
-        // Tests (optional but recommended)
-//        .testTarget(
-//            name: "BuildableTests",
-//            dependencies: ["Buildable", "BuildableMacros"]
-//        ),
-//        .testTarget(
-//            name: "BuildableMacrosTests",
-//            dependencies: [
-//                "BuildableMacros",
-//                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax")
-//            ]
-//        )
+        .testTarget(
+            name: "BuildableTests",
+            dependencies: ["Buildable", "BuildableMacros"]
+        ),
+        .testTarget(
+            name: "BuildableMacrosTests",
+            dependencies: [
+                "BuildableMacros",
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax")
+            ]
+        )
     ]
 )

@@ -7,8 +7,10 @@
 
 import Foundation
 
-@attached(peer) public macro Required() =
+@attached(memberAttribute)
+public macro Required() =
   #externalMacro(module: "BuildableMacros", type: "NoopMarkerMacro")
 
-@attached(peer) public macro Accumulating(adder: String? = nil) =
+@attached(memberAttribute)
+public macro Accumulating(adder: String? = nil) =
   #externalMacro(module: "BuildableMacros", type: "NoopMarkerMacro")
