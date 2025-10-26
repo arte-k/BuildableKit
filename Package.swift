@@ -14,15 +14,10 @@ let package = Package(
         .library(name: "BuildableMacros", targets: ["BuildableMacros"]),
     ],
     dependencies: [
-        // Pin to the swift-syntax that matches your Xcode.
-        // For Xcode 15.4 / Swift 5.10, 510.0.2 is safe.
         .package(url: "https://github.com/apple/swift-syntax.git", exact: "510.0.2")
     ],
     targets: [
-        // Runtime / public API
         .target(name: "Buildable"),
-
-        // Macro target (compiler plugin)
         .macro(
             name: "BuildableMacros",
             dependencies: [
