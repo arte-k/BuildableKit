@@ -201,7 +201,7 @@ Because fluent builders are great — but hand-rolling them is painful.
 
 ## 🧾 License
 
-MIT © 2025 Your Name
+MIT © 2025 Artem K.
 
 ---
 
