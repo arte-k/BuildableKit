@@ -9,8 +9,8 @@ import Foundation
 
 @attached(memberAttribute)
 public macro Required() =
-  #externalMacro(module: "BuildableMacros", type: "NoopMarkerMacro")
+  #externalMacro(module: "BuildableMacros", type: "MarkerMacro")
 
 @attached(memberAttribute)
 public macro Accumulating(adder: String? = nil) =
-  #externalMacro(module: "BuildableMacros", type: "NoopMarkerMacro")
+  #externalMacro(module: "BuildableMacros", type: "MarkerMacro")

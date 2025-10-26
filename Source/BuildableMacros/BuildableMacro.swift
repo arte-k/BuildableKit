@@ -5,50 +5,68 @@
 //  Created by Arte.k on 25.10.2025.
 //
 
+
 import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
-import SwiftDiagnostics
 
+// MARK: - Helper model moved out of the macro method
+struct Field {
+    let name: String
+    let type: String
+    let isRequired: Bool
+    let accumulatingAdder: String?  // non-nil if accumulating, adder name
+    let defaultExpr: String?        // initializer literal if provided
+
+    init(name: String, type: String, isRequired: Bool, accumulatingAdder: String?, defaultExpr: String?) {
+        self.name = name
+        self.type = type
+        self.isRequired = isRequired
+        self.accumulatingAdder = accumulatingAdder
+        self.defaultExpr = defaultExpr
+    }
+}
+
+// MARK: - Marker macros (@Required / @Accumulating)
+// These are *memberAttribute* macros: they don't emit code, they just mark fields.
 public struct MarkerMacro: MemberAttributeMacro {
     public static func expansion(
         of node: AttributeSyntax,
         attachedTo declaration: some DeclGroupSyntax,
         providingAttributesFor member: some DeclSyntaxProtocol,
         in context: some MacroExpansionContext
-    ) throws -> [AttributeSyntax] { return [] }
+    ) throws -> [AttributeSyntax] { [] }
 }
 
-private struct Field {
-    let name: String
-    let type: String
-    let isRequired: Bool
-    let accumulatingAdder: String? // nil if not accumulating
-}
-
-public struct BuildableMacro: PeerMacro {
+// MARK: - Buildable member macro (generates nested Builder + Stage types)
+public struct BuildableMacro: MemberMacro {
     public static func expansion(
         of node: AttributeSyntax,
-        providingPeersOf decl: some DeclSyntaxProtocol,
+        providingMembersOf decl: some DeclGroupSyntax,
         in ctx: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
 
+        // ---- Model name (identifier → name)
         guard let structDecl = decl.as(StructDeclSyntax.self) else { return [] }
-        let modelName = structDecl.name.text
+        let modelName = structDecl.name.text   // use .name, not .identifier
 
-        // Parse explicit order: @Buildable(order: ["a","b","c"])
+        // ---- Parse explicit order: @Buildable(order: ["a","b","c"])
         var explicitOrder: [String] = []
-        if let args = node.arguments?.as(LabeledExprListSyntax.self) {
-            for arg in args {
-                if arg.label?.text == "order",
-                   let array = arg.expression.as(ArrayExprSyntax.self) {
-                    explicitOrder = array.elements.compactMap { $0.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue }
+        if let labeled = node.arguments?.as(LabeledExprListSyntax.self) {
+            for arg in labeled where arg.label?.text == "order" {
+                if let array = arg.expression.as(ArrayExprSyntax.self) {
+                    for el in array.elements {
+                        if let s = el.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue {
+                            explicitOrder.append(s)
+                        }
+                    }
                 }
             }
         }
 
-        // Collect stored props with markers
+        // ---- Collect stored properties (single binding vars)
         var fields: [Field] = []
+
         for member in structDecl.memberBlock.members {
             guard let v = member.decl.as(VariableDeclSyntax.self) else { continue }
             guard v.bindings.count == 1, let b = v.bindings.first else { continue }
@@ -58,219 +76,257 @@ public struct BuildableMacro: PeerMacro {
 
             let name = idPattern.identifier.text
 
-            // detect markers on decl
+            // Attributes (AttributeListSyntax is NOT optional here)
             var isRequired = false
             var accumulatingAdder: String? = nil
-
-            let attrs = v.attributes
-            
-            for attr in attrs {
-                guard let a = attr.as(AttributeSyntax.self) else { continue }
-                let attrName = a.attributeName.trimmedDescription
+            for a in v.attributes {
+                guard let attr = a.as(AttributeSyntax.self) else { continue }
+                let attrName = attr.attributeName.trimmedDescription
                 if attrName == "Required" { isRequired = true }
                 if attrName == "Accumulating" {
-                    // try parse adder: Accumulating(adder: "addHeader")
-                    if let tuple = a.arguments?.as(LabeledExprListSyntax.self) {
+                    if let tuple = attr.arguments?.as(LabeledExprListSyntax.self) {
                         for el in tuple where el.label?.text == "adder" {
-                            accumulatingAdder = el.expression.as(StringLiteralExprSyntax.self)?
-                                .representedLiteralValue ?? nil
+                            if let lit = el.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue {
+                                accumulatingAdder = lit
+                            }
                         }
                     }
                     if accumulatingAdder == nil {
-                        // default adder: "add" + CapitalizedName
-                        accumulatingAdder = "add" + name.prefix(1).uppercased() + name.dropFirst()
+                        let cap = name.prefix(1).uppercased() + name.dropFirst()
+                        accumulatingAdder = "add\(cap)"
                     }
                 }
             }
-            
 
-            fields.append(.init(name: name, type: typeAnno, isRequired: isRequired, accumulatingAdder: accumulatingAdder))
+            // Default value expression (if any)
+            var def: String? = nil
+            if let initValue = b.initializer?.value {
+                def = initValue.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                // Cheap defaults for common cases
+                let t = typeAnno.replacingOccurrences(of: " ", with: "")
+                if t.hasPrefix("[") && t.hasSuffix("]") {
+                    def = t.contains(":") ? "[:]" : "[]"
+                } else if t.hasPrefix("Set<") {
+                    def = "Set()"
+                } else if t.hasSuffix("?") {
+                    def = "nil"
+                }
+            }
+
+            fields.append(Field(name: name,
+                                type: typeAnno,
+                                isRequired: isRequired,
+                                accumulatingAdder: accumulatingAdder,
+                                defaultExpr: def))
         }
 
-        // Compute ordered steps: prefer explicit, else declared order of required+accumulating
+        // ---- Determine ordered steps: required + accumulating properties
         let stepNames: [String] = {
             if !explicitOrder.isEmpty { return explicitOrder }
-            // Include only fields that are Required or Accumulating (others treated as defaulted)
             return fields.filter { $0.isRequired || $0.accumulatingAdder != nil }.map { $0.name }
         }()
 
-        // Quick map for lookup
-        let fieldByName = Dictionary(uniqueKeysWithValues: fields.map { ($0.name, $0) })
+        // For quick lookup
+        let byName = Dictionary(uniqueKeysWithValues: fields.map { ($0.name, $0) })
 
-        // Build stages
+        // Helper for building ctor args
+        func valueExpr(for f: Field) -> String {
+            if stepNames.contains(f.name) { return "s_\(f.name)" }       // collected during stages
+            if let def = f.defaultExpr { return def }                     // default or nil
+            return "\(f.type)()"                                          // last resort
+        }
+
         var decls: [DeclSyntax] = []
-        var stageNames: [String] = []
 
-        for (idx, step) in stepNames.enumerated() {
-            let stageName = "\(modelName)BuilderStage\(idx)"
-            stageNames.append(stageName)
+        // ---- Builder entrypoint
+        let firstStage = stepNames.isEmpty ? "Final" : "Stage0"
+        let builderDecl = """
+        public struct Builder {
+            public init() {}
+            public func start() -> \(firstStage) { .init() }
+            public func callAsFunction() -> \(firstStage) { start() }
+        }
+        """
+        decls.append(DeclSyntax(stringLiteral: builderDecl))
 
-            guard let f = fieldByName[step] else { continue }
+        // ---- Stages generation
+        if !stepNames.isEmpty {
+            // Stage0 .. Stage(N-2)
+            for (idx, step) in stepNames.enumerated() where idx < stepNames.count - 1 {
+                let stageName = "Stage\(idx)"
+                let nextStage = "Stage\(idx + 1)"
+                let prevNames = Array(stepNames.prefix(idx))
+                let storedDecls = prevNames
+                    .map { "let s_\($0): \(byName[$0]!.type)" }
+                    .joined(separator: "\n        ")
 
-            let storagePrefix = "s"
-            let prefixDecls: [String] = fields.map {
-                "let \(storagePrefix)_\($0.name): \($0.type)\(defaultSuffix($0))"
+                let param = byName[step]!
+                let setterName = "set" + param.name.prefix(1).uppercased() + param.name.dropFirst()
+                let ctorParams = prevNames
+                    .map { "s_\($0): \(byName[$0]!.type)" }
+                    .joined(separator: ", ")
+                let ctorBody = prevNames
+                    .map { "self.s_\($0) = s_\($0)" }
+                    .joined(separator: "\n            ")
+
+                let passArgs = (prevNames.map { "s_\($0): s_\($0)" } + ["s_\(param.name): value"])
+                    .joined(separator: ", ")
+
+                let setter = """
+                public func \(setterName)(_ value: \(param.type)) -> \(nextStage) {
+                    return .init(\(passArgs))
+                }
+                """
+
+                let stageDecl = """
+                public struct \(stageName) {
+                    \(storedDecls.isEmpty ? "" : storedDecls)
+
+                    public init(\(ctorParams)) {
+                        \(ctorBody)
+                    }
+
+                    \(setter)
+                }
+                """
+                decls.append(DeclSyntax(stringLiteral: stageDecl))
             }
 
-            let setOrAddMethod: String = {
-                if let adder = f.accumulatingAdder {
-                    // Accumulating step: repeatable adder that returns *same* stage
-                    if isMapType(f.type) {
-                        return """
-                        public func \(adder)(_ key: \(mapKeyType(f.type)), _ value: \(mapValueType(f.type))) -> \(stageName) {
-                            var copy = \(storagePrefix)_\(f.name)
-                            copy[key] = value
-                            return .init(\(initArgs(storagePrefix: storagePrefix, fields: fields, overwrites: [f.name: "copy"])))
+            // Final stage (Stage(N-1) → Final with adder/build)
+            if let last = stepNames.last, let lastField = byName[last] {
+                let finalStored = stepNames.map { "let s_\($0): \(byName[$0]!.type)" }.joined(separator: "\n        ")
+                let finalInitParams = stepNames.map { "s_\($0): \(byName[$0]!.type)" }.joined(separator: ", ")
+                let finalInitBody = stepNames.map { "self.s_\($0) = s_\($0)" }.joined(separator: "\n            ")
+
+                var bodyPieces: [String] = []
+
+                // Accumulating adder on Final (repeatable)
+                if let adder = lastField.accumulatingAdder {
+                    let t = lastField.type.replacingOccurrences(of: " ", with: "")
+                    if t.hasPrefix("[") && t.contains(":") && t.hasSuffix("]") {
+                        // Dictionary
+                        let inner = String(t.dropFirst().dropLast())
+                        let parts = inner.split(separator: ":", maxSplits: 1).map { String($0) }
+                        let keyT = parts.count == 2 ? parts[0] : "AnyHashable"
+                        let valT = parts.count == 2 ? parts[1] : "Any"
+                        bodyPieces.append("""
+                        public func \(adder)(_ key: \(keyT), _ value: \(valT)) -> Self {
+                            var dict = s_\(last)
+                            dict[key] = value
+                            return .init(\(stepNames.map { n in n == last ? "s_\(n): dict" : "s_\(n): s_\(n)" }.joined(separator: ", ")))
                         }
-                        """
-                    } else if isArrayType(f.type) {
-                        return """
-                        public func \(adder)(_ value: \(arrayElementType(f.type))) -> \(stageName) {
-                            var copy = \(storagePrefix)_\(f.name)
-                            copy.append(value)
-                            return .init(\(initArgs(storagePrefix: storagePrefix, fields: fields, overwrites: [f.name: "copy"])))
+                        """)
+                    } else if t.hasPrefix("[") && t.hasSuffix("]") && !t.contains(":") {
+                        // Array
+                        let elem = String(t.dropFirst().dropLast())
+                        bodyPieces.append("""
+                        public func \(adder)(_ value: \(elem)) -> Self {
+                            var arr = s_\(last)
+                            arr.append(value)
+                            return .init(\(stepNames.map { n in n == last ? "s_\(n): arr" : "s_\(n): s_\(n)" }.joined(separator: ", ")))
                         }
-                        """
-                    } else if isSetType(f.type) {
-                        return """
-                        public func \(adder)(_ value: \(setElementType(f.type))) -> \(stageName) {
-                            var copy = \(storagePrefix)_\(f.name)
-                            copy.insert(value)
-                            return .init(\(initArgs(storagePrefix: storagePrefix, fields: fields, overwrites: [f.name: "copy"])))
+                        """)
+                    } else if t.hasPrefix("Set<") {
+                        let elem = t.dropFirst(4).dropLast()
+                        bodyPieces.append("""
+                        public func \(adder)(_ value: \(elem)) -> Self {
+                            var set = s_\(last)
+                            set.insert(value)
+                            return .init(\(stepNames.map { n in n == last ? "s_\(n): set" : "s_\(n): s_\(n)" }.joined(separator: ", ")))
                         }
-                        """
+                        """)
                     } else {
-                        // fallback: treat like set
-                        return """
-                        public func \(adder)(_ value: \(f.type)) -> \(stageName) {
-                            return .init(\(initArgs(storagePrefix: storagePrefix, fields: fields, overwrites: [f.name: "value"])))
+                        // Fallback: overwrite
+                        bodyPieces.append("""
+                        public func \(adder)(_ value: \(lastField.type)) -> Self {
+                            return .init(\(stepNames.map { n in n == last ? "s_\(n): value" : "s_\(n): s_\(n)" }.joined(separator: ", ")))
                         }
-                        """
+                        """)
                     }
-                } else {
-                    // Required single set -> advance to next stage
-                    let nextStage = (idx + 1 < stepNames.count) ? "\(modelName)BuilderStage\(idx+1)" : "\(modelName)BuilderFinal"
-                    let methodName = "set" + step.prefix(1).uppercased() + step.dropFirst()
-                    return """
-                    public func \(methodName)(_ value: \(f.type)) -> \(nextStage) {
-                        return .init(\(initArgs(storagePrefix: storagePrefix, fields: fields, overwrites: [f.name: "value"])))
+                }
+
+                // Build() assembles all fields (steps + non-steps with defaults)
+                let ctorArgs = fields.map { f in "\(f.name): \(valueExpr(for: f))" }.joined(separator: ", ")
+                bodyPieces.append("""
+                public func build() -> \(modelName) {
+                    \(modelName)(\(ctorArgs))
+                }
+                """)
+
+                let finalDecl = """
+                public struct Final {
+                    \(finalStored)
+
+                    public init(\(finalInitParams)) {
+                        \(finalInitBody)
+                    }
+
+                    \(bodyPieces.joined(separator: "\n\n                    "))
+                }
+                """
+                decls.append(DeclSyntax(stringLiteral: finalDecl))
+
+                // Bridge Stage(N-1) → Final
+                if stepNames.count >= 2 {
+                    let idx = stepNames.count - 2
+                    let prevStageName = "Stage\(idx)"
+                    let prevNames = Array(stepNames.prefix(idx))
+                    let setterName = "set" + last.prefix(1).uppercased() + last.dropFirst()
+
+                    let storedDecls = prevNames.map { "let s_\($0): \(byName[$0]!.type)" }.joined(separator: "\n        ")
+                    let ctorParams = prevNames.map { "s_\($0): \(byName[$0]!.type)" }.joined(separator: ", ")
+                    let ctorBody = prevNames.map { "self.s_\($0) = s_\($0)" }.joined(separator: "\n                ")
+                    let passArgs = (prevNames.map { "s_\($0): s_\($0)" } + ["s_\(last): value"]).joined(separator: ", ")
+
+                    let stageDecl = """
+                    public struct \(prevStageName) {
+                        \(storedDecls.isEmpty ? "" : storedDecls)
+
+                        public init(\(ctorParams)) {
+                            \(ctorBody)
+                        }
+
+                        public func \(setterName)(_ value: \(lastField.type)) -> Final {
+                            .init(\(passArgs))
+                        }
                     }
                     """
-                }
-            }()
-
-            let buildIfLast: String = {
-                if idx == stepNames.count - 1 {
-                    // Final stage will be separate type; we still add nothing here.
-                    return ""
+                    decls.append(DeclSyntax(stringLiteral: stageDecl))
                 } else {
-                    return ""
+                    // Single-step model: Stage0 → Final
+                    let setterName = "set" + last.prefix(1).uppercased() + last.dropFirst()
+                    let stage0 = """
+                    public struct Stage0 {
+                        public init() {}
+                        public func \(setterName)(_ value: \(lastField.type)) -> Final {
+                            .init(s_\(last): value)
+                        }
+                    }
+                    """
+                    decls.append(DeclSyntax(stringLiteral: stage0))
                 }
-            }()
-
-            let stage =
-            """
-            public struct \(stageName) {
-                \(prefixDecls.joined(separator: "\n    "))
-
-                public init(\(initParams(fields: fields, storagePrefix: storagePrefix))) {
-                    \(initBody(fields: fields, storagePrefix: storagePrefix))
-                }
-
-                \(setOrAddMethod)
-                \(buildIfLast)
             }
-            """
-            decls.append(DeclSyntax(stringLiteral: stage))
-        }
-
-        // Final stage type with build()
-        let finalStageName = "\(modelName)BuilderFinal"
-        stageNames.append(finalStageName)
-        let finalStage =
-        """
-        public struct \(finalStageName) {
-            \(fields.map { "let s_\($0.name): \($0.type)\(defaultSuffix($0))" }.joined(separator: "\n    "))
-
-            public init(\(initParams(fields: fields, storagePrefix: "s"))) {
-                \(initBody(fields: fields, storagePrefix: "s"))
-            }
-
-            public func build() -> \(modelName) {
-                return \(modelName)(\(fields.map { "\($0.name): s_\($0.name)" }.joined(separator: ", ")))
-            }
-        }
-        """
-        decls.append(DeclSyntax(stringLiteral: finalStage))
-
-        // Generate the wrapper entrypoint: Model.Builder()
-        let startInitArgs = initArgs(storagePrefix: "Self()", fields: fields, overwrites: [:], asLiterals: true)
-        let wrapper =
-        """
-        extension \(modelName) {
-            public struct Builder {
+        } else {
+            // No steps → just Final with defaults + helper Stage0
+            let ctorArgs = fields.map { f in "\(f.name): \(valueExpr(for: f))" }.joined(separator: ", ")
+            let finalDecl = """
+            public struct Final {
                 public init() {}
-                public func callAsFunction() -> \(stageNames.first ?? finalStageName) { start() }
-                public func start() -> \(stageNames.first ?? finalStageName) {
-                    return \((stageNames.first ?? finalStageName))(\(startInitArgs))
-                }
+                public func build() -> \(modelName) { \(modelName)(\(ctorArgs)) }
             }
+            """
+            decls.append(DeclSyntax(stringLiteral: finalDecl))
+
+            let stage0 = """
+            public struct Stage0 {
+                public init() {}
+                public func build() -> \(modelName) { Final().build() }
+            }
+            """
+            decls.append(DeclSyntax(stringLiteral: stage0))
         }
-        """
-        decls.append(DeclSyntax(stringLiteral: wrapper))
 
         return decls
     }
 }
-
-// ---------- helpers (stringly-typed but OK for MVP) ----------
-
-private func defaultSuffix(_ f: Field) -> String {
-    if f.accumulatingAdder != nil {
-        // default to empty collection if no initializer provided in source
-        return ""
-    }
-    return "" // keep simple; could inspect default values later
-}
-
-private func initParams(fields: [Field], storagePrefix: String) -> String {
-    fields.map { "\(storagePrefix)_\($0.name): \($0.type)" }.joined(separator: ", ")
-}
-
-private func initBody(fields: [Field], storagePrefix: String) -> String {
-    fields.map { "self.\(storagePrefix)_\($0.name) = \(storagePrefix)_\($0.name)" }.joined(separator: "\n        ")
-}
-
-private func initArgs(storagePrefix: String, fields: [Field], overwrites: [String:String], asLiterals: Bool = false) -> String {
-    fields.map {
-        if let ow = overwrites[$0.name] { return "s_\($0.name): \(ow)" }
-        if asLiterals {
-            // naive zero-inits for collections
-            if isArrayType($0.type) { return "s_\($0.name): []" }
-            if isMapType($0.type) { return "s_\($0.name): [:]" }
-            if isSetType($0.type) { return "s_\($0.name): Set()" }
-        }
-        return "s_\($0.name): \(storagePrefix).s_\($0.name)"
-    }.joined(separator: ", ")
-}
-
-private func isArrayType(_ t: String) -> Bool { t.trimmingCharacters(in: .whitespaces).hasPrefix("[") && t.hasSuffix("]") && !t.contains(":") }
-private func isMapType(_ t: String) -> Bool { t.trimmingCharacters(in: .whitespaces).hasPrefix("[") && t.contains(":") && t.hasSuffix("]") }
-private func isSetType(_ t: String) -> Bool { t.trimmingCharacters(in: .whitespaces).hasPrefix("Set<") }
-private func arrayElementType(_ t: String) -> String {
-    guard let l = t.firstIndex(of: "["), let r = t.firstIndex(of: "]") else { return "Any" }
-    return String(t[t.index(after: l)..<r]).trimmingCharacters(in: .whitespaces)
-}
-private func mapKeyType(_ t: String) -> String {
-    guard let l = t.firstIndex(of: "["), let c = t.firstIndex(of: ":"), let r = t.firstIndex(of: "]") else { return "AnyHashable" }
-    return String(t[t.index(after: l)..<c]).trimmingCharacters(in: .whitespaces)
-}
-private func mapValueType(_ t: String) -> String {
-    guard let c = t.firstIndex(of: ":"), let r = t.firstIndex(of: "]") else { return "Any" }
-    return String(t[t.index(after: c)..<r]).trimmingCharacters(in: .whitespaces)
-}
-private func setElementType(_ t: String) -> String {
-    guard let l = t.firstIndex(of: "<"), let r = t.lastIndex(of: ">") else { return "AnyHashable" }
-    return String(t[t.index(after: l)..<r]).trimmingCharacters(in: .whitespaces)
-}
-

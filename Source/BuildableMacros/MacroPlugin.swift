@@ -12,6 +12,6 @@ import SwiftSyntaxMacros
 struct BuildablePlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         BuildableMacro.self,
-        MarkerMacro.self,
+        MarkerMacro.self
     ]
 }
