@@ -23,16 +23,19 @@ Add this package to your project via **Swift Package Manager**:
 
 ```swift
 .package(url: "https://github.com/yourname/BuildableKit.git", from: "0.1.0")
+```
 
 Then add the dependencies to your target:
 
+```swift
 .target(
     name: "App",
     dependencies: [
         .product(name: "Buildable", package: "BuildableKit"),
         .product(name: "BuildableMacros", package: "BuildableKit")
     ]
-)```
+)
+```
 
 ---
 
@@ -40,40 +43,46 @@ Then add the dependencies to your target:
 
 Import both modules:
 
+```swift
 import Buildable
 import BuildableMacros
-
+```
 
 Annotate your model:
 
-```@Buildable(order: ["url", "method", "headers"])
+```swift
+@Buildable(order: ["url", "method", "headers"])
 public struct Request {
     @Required public var url: URL
     @Required public var method: String
     @Accumulating(adder: "addHeader") public var headers: [String:String] = [:]
-}```
-
+}
+```
 
 Now you can create a fully typed builder:
 
-```let request = Request.Builder()
+```swift
+let request = Request.Builder()
     .setUrl(URL(string: "https://api.apple.com")!)
     .setMethod("POST")
     .addHeader("Content-Type", "application/json")
     .addHeader("Accept", "application/json")
-    .build()```
+    .build()
+```
 
+If you try to skip a required step or call them in the wrong order —  
+💥 **compile error**, not runtime bug.
 
-If you try to skip a required step or call them in the wrong order —
-💥 compile error, not runtime bug.
+---
 
 ## 🧠 Under the Hood
 
-When you mark a model with @Buildable, the macro generates a chain of builder stages that represent each step in the order you define.
+When you mark a model with `@Buildable`, the macro generates a **chain of builder stages** that represent each step in the order you define.
 
-Using the Request example above, the macro expands roughly into this:
+Using the `Request` example above, the macro expands roughly into this:
 
-```public struct Request {
+```swift
+public struct Request {
     public var url: URL
     public var method: String
     public var headers: [String:String]
@@ -115,40 +124,45 @@ extension Request {
         public func start() -> RequestBuilderStage0 { .init() }
         public callAsFunction() -> RequestBuilderStage0 { start() }
     }
-}```
-
+}
+```
 
 So when you write:
 
-```Request.Builder()
+```swift
+Request.Builder()
     .setUrl(...)
     .setMethod(...)
     .addHeader(...)
-    .build()```
+    .build()
+```
 
-
-you’re actually chaining different types, each one allowing only the next valid method.
+you’re actually chaining **different types**, each one allowing *only* the next valid method.  
 That’s why you can’t accidentally skip steps or reorder calls.
 
 ---
 
-### 🧩 Another Example
-```@Buildable(order: ["name", "userId", "properties"])
+## 🧩 Another Example
+
+```swift
+@Buildable(order: ["name", "userId", "properties"])
 public struct AnalyticsEvent {
     @Required public var name: String
     @Required public var userId: UUID
     @Accumulating(adder: "prop") public var properties: [String:String] = [:]
-}```
-
+}
+```
 
 Usage:
 
-```let event = AnalyticsEvent.Builder()
+```swift
+let event = AnalyticsEvent.Builder()
     .setName("SubscriptionStarted")
     .setUserId(UUID())
     .prop("plan", "pro")
     .prop("country", "UA")
-    .build()```
+    .build()
+```
 
 ---
 
@@ -156,39 +170,32 @@ Usage:
 
 Because fluent builders are great — but hand-rolling them is painful.
 
-Before    After
-dozens of boilerplate setters    1 annotation
-runtime misuse (forgot to set field)    compile-time check
-untyped dictionary passing    fully typed steps
-messy “init hell”    readable chain
+| Before | After |
+|--------|--------|
+| dozens of boilerplate setters | 1 annotation |
+| runtime misuse (forgot to set field) | compile-time check |
+| untyped dictionary passing | fully typed steps |
+| messy “init hell” | readable chain |
 
 ---
 
-###🧰 Advanced Topics
+## 🧰 Advanced Topics
 
-You can omit order: → fields are used in declaration order.
-
-@Accumulating works with arrays, dictionaries, and sets.
-
-Future versions will support:
-
-Optional steps (@Optional)
-
-Default values
-
-Diagnostics for misuse
-
-consuming functions for Swift 6 strict ownership
+- You can omit `order:` → fields are used in declaration order.  
+- `@Accumulating` works with arrays, dictionaries, and sets.  
+- Future versions will support:
+  - Optional steps (`@Optional`)
+  - Default values
+  - Diagnostics for misuse
+  - `consuming` functions for Swift 6 strict ownership
 
 ---
 
 ## ⚙️ Requirements
 
-Xcode 15.4+ (Swift 5.10) or Xcode 16 (Swift 6.0)
-
-Works on macOS 13+ / iOS 15+
-
-Uses Swift Macros (compiler plugin)
+- Xcode 15.4+ (Swift 5.10) or Xcode 16 (Swift 6.0)
+- Works on macOS 13+ / iOS 15+
+- Uses Swift Macros (compiler plugin)
 
 ---
 
@@ -197,3 +204,8 @@ Uses Swift Macros (compiler plugin)
 MIT © 2025 Your Name
 
 ---
+
+### ❤️ Contributing
+
+PRs and ideas welcome!  
+Open an issue if you want to extend typestate builders, optional steps, or result-builder-style declarative syntax.
