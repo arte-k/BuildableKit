@@ -22,7 +22,7 @@ Just annotate your struct and get a fluent, ordered builder instantly.
 Add this package to your project via **Swift Package Manager**:
 
 ```swift
-.package(url: "https://github.com/yourname/BuildableKit.git", from: "0.1.5")
+.package(url: "https://github.com/yourname/BuildableKit.git", from: "0.2.0")
 ```
 
 Then add the dependencies to your target:
