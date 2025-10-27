@@ -103,7 +103,7 @@ extension BuildableMacro: PeerMacro {
     // Build (gated by where-clause on final state)
     let ctorArgs = props.map { "\($0.name): \($0.name)!" }.joined(separator: ", ")
     let buildMethod = """
-      func build() -> \(model) where State == \(model).\(states.last!) {
+      public func build() -> \(model) where State == \(model).\(states.last!) {
         \(model)(\(ctorArgs))
       }
     """
