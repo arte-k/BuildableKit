@@ -64,8 +64,7 @@ Now you can create a fully typed builder:
 let request = Request.builder
     .setUrl(URL(string: "https://api.apple.com")!)
     .setMethod("POST")
-    .addHeader("Content-Type", "application/json")
-    .addHeader("Accept", "application/json")
+    .setHeaders(["Content-Type", "application/json"])
     .build()
 ```
 
@@ -101,9 +100,9 @@ public struct Request {
 }
 
 public struct RequestBuilder<State> {
-    public var url: URL
-    public var method: String
-    public var headers: [String:String]
+    public var url: URL?
+    public var method: String?
+    public var headers: [String:String]?
 
     
     public init(url: URL? = nil, method: String? = nil, headers: [String : String]) {
