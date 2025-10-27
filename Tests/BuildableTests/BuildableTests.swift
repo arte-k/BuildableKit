@@ -18,10 +18,10 @@ struct Person {
 final class ExampleBuildableTest: XCTestCase {
     func testBuilder() {
         let p = Person
-//            .setName("Alice")
-//            .setAge(1)
-//            .build()
-        
+            .builder
+            .setName("Alice")
+            .setAge(1)
+            .build()
             
         XCTAssertEqual(p.name, "Alice")
     }
