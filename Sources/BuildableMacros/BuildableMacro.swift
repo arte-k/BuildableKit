@@ -109,7 +109,7 @@ extension BuildableMacro: PeerMacro {
     """
 
     let code = """
-    struct \(model)Builder<State> {
+    public struct \(model)Builder<State> {
     \(storage)
 
       public init() {}
