@@ -163,8 +163,7 @@ Usage:
 let event = AnalyticsEvent.builder
     .setName("SubscriptionStarted")
     .setUserId(UUID())
-    .prop("plan", "pro")
-    .prop("country", "UA")
+    .setproperties(["plan", "pro"])
     .build()
 ```
 
