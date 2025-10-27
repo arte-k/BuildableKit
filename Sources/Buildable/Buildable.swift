@@ -8,5 +8,7 @@
 import Foundation
 
 @attached(member, names: arbitrary)
-public macro Buildable(order: [String] = []) =
+@attached(peer,   names: suffixed(Builder))
+public macro Buildable() =
   #externalMacro(module: "BuildableMacros", type: "BuildableMacro")
+

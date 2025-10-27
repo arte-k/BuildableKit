@@ -1,5 +1,5 @@
 // swift-tools-version: 6.0
-// The swift-tools-version declares the minimum version of Swift required to build this package.
+
 
 import PackageDescription
 import CompilerPluginSupport
@@ -17,7 +17,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-syntax.git", exact: "510.0.2")
     ],
     targets: [
-        .target(name: "Buildable"),
+        // MARK: Runtime module
+        .target(
+            name: "Buildable",
+            dependencies: ["BuildableMacros"]
+        ),
+
+        // MARK: Macro plugin
         .macro(
             name: "BuildableMacros",
             dependencies: [
@@ -28,16 +34,10 @@ let package = Package(
             ]
         ),
 
+        // MARK: Tests
         .testTarget(
             name: "BuildableTests",
-            dependencies: ["Buildable", "BuildableMacros"]
-        ),
-        .testTarget(
-            name: "BuildableMacrosTests",
-            dependencies: [
-                "BuildableMacros",
-                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax")
-            ]
+            dependencies: ["Buildable"]
         )
     ]
 )
